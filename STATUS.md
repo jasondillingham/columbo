@@ -360,12 +360,44 @@ target.yaml author will hit this. Documented in the autonomous plan. (2)
 to 0 (`columbo-r0-*`), so it doesn't thread the real round into Job names yet —
 fix before any real cluster-auto run.
 
-**Next (v0.7 per DESIGN):** local model on Thor (Ollama + ROCm) for probe
-generation + embedding-based finding dedup (replacing the v0.4 structural
-baseline). Smaller v0.6 follow-ups still open: clone-retry/cache for cluster
-egress flakiness; a real L2-at-volume cluster round once egress is stable; a
-real `auto` run against the live leonard checkout (creates a local branch in
-the operator's repo — needs a go-ahead).
+## v0.7 COMPLETE — local-model integration on Thor (2026-06-01)
+
+`docs/v0.7-plan.md`. Ollama on thor (RX 6700 XT) was already up;
+`qwen2.5-coder:7b` (gen) + `nomic-embed-text` (embed, 768-dim) confirmed live.
+The discipline shift: LLM output is nondeterministic, so verification moved
+from the byte-diff gate to STRUCTURAL properties, and **the model is opt-in —
+defaults stay deterministic** (fixed probes + structural dedup), so `make
+check` and committed rounds are unchanged without the flags.
+
+- `internal/ollama/` — runtime HTTP client (`Generate`, `Embed`); generic
+  `localhost` default (no homelab IP in source); timeout + fail-OPEN.
+  Unit-tested against httptest; no `make check` test touches thor.
+- **Embedding dedup** (`reconcile.DedupEmbed`, `--dedup=embed`): single-linkage
+  cosine clustering within severity, conservative threshold 0.88 (loss is
+  asymmetric — over-merge HIDES findings, so lean high). Gate test proves the
+  differentiator leonard can't show: it SEPARATES distinct findings that share
+  a Class (where structural over-merges) and merges near-identical. Live on
+  leonard L2: 27 -> 2 clusters, matching structural (within-class cosine
+  ~0.896, cross-class ~0.82-0.84, threshold sits in the gap). Falls back to
+  structural on any embed error.
+- **LLM probe generation** (`caps.GenerateLLM`, `audit l2 --llm-probes N`):
+  prompts a coder model with each tool's schema for adversarial JSON args.
+  Honesty firewall — the model PROPOSES, the deterministic `classifyL2`
+  DISPOSES; concrete args travel as the reproducer; Class left empty so
+  structural won't over-merge distinct LLM findings. Live on leonard: valid
+  schema-aware probes ran + classified (some PASS, some FINDING). Honest
+  result: they hit the SAME leak classes the fixed battery already covers — no
+  novel class surfaced on leonard. Additive; fixed battery always runs; fails
+  open.
+
+**v0.7 done.** `make check` green (incl. `internal/ollama`); defaults unchanged
+without the flags.
+
+**Next (toward v1.0 = self-audit clean):** embedding dedup / LLM probes inside
+k3s pods; threat-model extraction (the third local-model use); clone-retry for
+cluster egress; the `auto --k3s` round-number fix; a real `auto` run against
+the live leonard checkout (writes a branch in the operator's repo — needs a
+go-ahead).
 
 ## Verified clean as of last touch
 

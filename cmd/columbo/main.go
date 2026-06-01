@@ -18,6 +18,9 @@ import (
 	"github.com/jasondillingham/columbo/internal/k3srunner"
 	"github.com/jasondillingham/columbo/internal/lanes"
 	"github.com/jasondillingham/columbo/internal/lanewire"
+	"github.com/jasondillingham/columbo/internal/probes/caps"
+	"github.com/jasondillingham/columbo/internal/probes/mcp"
+	"github.com/jasondillingham/columbo/internal/ollama"
 	"github.com/jasondillingham/columbo/internal/orchestrator"
 	"github.com/jasondillingham/columbo/internal/query"
 	"github.com/jasondillingham/columbo/internal/reconcile"
@@ -116,10 +119,13 @@ internal packages get filled in.`,
 	auditCmd.AddCommand(l1Cmd)
 
 	var (
-		l2Write bool
-		l2Round int
-		l2Out   string
-		l2Force bool
+		l2Write    bool
+		l2Round    int
+		l2Out      string
+		l2Force    bool
+		l2LLM      int
+		l2Ollama   string
+		l2GenModel string
 	)
 	l2Cmd := &cobra.Command{
 		Use:   "l2 <target.yaml>",
@@ -130,7 +136,26 @@ internal packages get filled in.`,
 			if err != nil {
 				return err
 			}
-			results := lanes.RunL2(t)
+			// Optional LLM-generated probes augment the fixed battery. Fail
+			// open: if the model is disabled/errors, the fixed probes still run.
+			var extra func([]mcp.Tool) []caps.Probe
+			if l2LLM > 0 {
+				gc := ollama.New(l2Ollama, 120*time.Second)
+				if gc.Enabled() {
+					extra = func(tools []mcp.Tool) []caps.Probe {
+						p, err := caps.GenerateLLM(func(prompt string) (string, error) {
+							return gc.Generate(l2GenModel, prompt)
+						}, tools, l2LLM)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "llm-probes: %v (fixed battery still ran)\n", err)
+						}
+						return p
+					}
+				} else {
+					fmt.Fprintln(os.Stderr, "llm-probes: no --ollama host; skipping (fixed battery only)")
+				}
+			}
+			results := lanes.RunL2Augmented(t, extra)
 			printResults(results)
 			tally := lanes.Tally(results)
 			fmt.Printf("\nL2 %s: %d PASS  %d FINDING  %d FAIL  %d SKIP\n",
@@ -151,6 +176,9 @@ internal packages get filled in.`,
 	l2Cmd.Flags().IntVar(&l2Round, "round", 1, "round number N for bughunt-N-*.md")
 	l2Cmd.Flags().StringVar(&l2Out, "out", "", "output dir (default: <target repo>/audits)")
 	l2Cmd.Flags().BoolVar(&l2Force, "force", false, "overwrite existing bughunt-N files")
+	l2Cmd.Flags().IntVar(&l2LLM, "llm-probes", 0, "N LLM-generated adversarial probes per tool (0 = off; needs --ollama)")
+	l2Cmd.Flags().StringVar(&l2Ollama, "ollama", "", "Ollama host URL for --llm-probes")
+	l2Cmd.Flags().StringVar(&l2GenModel, "gen-model", "qwen2.5-coder:7b", "generation model for --llm-probes")
 	auditCmd.AddCommand(l2Cmd)
 
 	var (
@@ -241,10 +269,13 @@ internal packages get filled in.`,
 		rOut   string
 		rForce bool
 		rRaw   bool
-		rK3s   bool
-		rImage string
-		rPath  string
-		rLanes string
+		rK3s        bool
+		rImage      string
+		rPath       string
+		rLanes      string
+		rDedup      string
+		rOllama     string
+		rEmbedModel string
 	)
 	roundCmd := &cobra.Command{
 		Use:   "round <target.yaml>",
@@ -302,11 +333,12 @@ internal packages get filled in.`,
 					t.Name, tally[lanes.PASS], tally[lanes.FINDING], tally[lanes.FAIL], tally[lanes.SKIP])
 			}
 
+			dClient := ollama.New(rOllama, 90*time.Second)
 			rawFindings, dedupedFindings := 0, 0
 			for i := range reports {
 				rawFindings += len(reports[i].Findings)
 				if !rRaw {
-					reports[i].Findings = reconcile.Dedup(reports[i].Findings)
+					reports[i].Findings = dedupFindings(rDedup, dClient, rEmbedModel, reports[i].Findings)
 				}
 				dedupedFindings += len(reports[i].Findings)
 			}
@@ -344,6 +376,9 @@ internal packages get filled in.`,
 	roundCmd.Flags().StringVar(&rImage, "image", "columbo:slim", "image for k3s lane Jobs (--k3s)")
 	roundCmd.Flags().StringVar(&rPath, "target-path", "/examples/columbo-cluster.target.yaml", "target.yaml path INSIDE the image (--k3s)")
 	roundCmd.Flags().StringVar(&rLanes, "lanes", "l1,l2,l6", "comma-separated lanes to run")
+	roundCmd.Flags().StringVar(&rDedup, "dedup", "structural", "dedup mode: structural | embed")
+	roundCmd.Flags().StringVar(&rOllama, "ollama", "", "Ollama host URL for --dedup=embed (e.g. http://host:11434)")
+	roundCmd.Flags().StringVar(&rEmbedModel, "embed-model", "nomic-embed-text", "embedding model for --dedup=embed")
 	auditCmd.AddCommand(roundCmd)
 
 	// auto: the autonomous round. Kick off, walk away, get a PR-ready local
@@ -464,6 +499,22 @@ func cloneAndSetup(t *target.Target, workdir string) (string, error) {
 		}
 	}
 	return dest, nil
+}
+
+// dedupFindings collapses a lane's findings by the chosen mode. "embed" uses
+// the local model; if the model is disabled or errors, it FAILS OPEN to
+// structural dedup (the model is an augmentation, never a gate on the audit).
+func dedupFindings(mode string, client *ollama.Client, embedModel string, fs []findings.Finding) []findings.Finding {
+	if mode == "embed" && client.Enabled() {
+		out, err := reconcile.DedupEmbed(fs, func(t string) ([]float32, error) {
+			return client.Embed(embedModel, t)
+		}, reconcile.DefaultEmbedThreshold)
+		if err == nil {
+			return out
+		}
+		fmt.Fprintf(os.Stderr, "embedding dedup unavailable (%v); falling back to structural\n", err)
+	}
+	return reconcile.Dedup(fs)
 }
 
 // gatherReports runs the given lanes (local goroutines, or k3s Jobs) and

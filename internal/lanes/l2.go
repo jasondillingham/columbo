@@ -28,6 +28,14 @@ const l2ProbeTimeout = 8 * time.Second
 // FINDING when a probe leaks Go internals (LOW, F002/F003 class) or panics the
 // server (HIGH, DoS).
 func RunL2(t *target.Target) []Result {
+	return RunL2Augmented(t, nil)
+}
+
+// RunL2Augmented runs L2 and, if extra is non-nil, appends LLM-generated probes
+// to the fixed battery (the fixed probes always run). extra receives the
+// target's tools and returns additional probes; an empty return is fine (fail
+// open — the model is an augmentation).
+func RunL2Augmented(t *target.Target, extra func([]mcp.Tool) []caps.Probe) []Result {
 	surface, ok := t.MCPStdio()
 	if !ok {
 		return []Result{res("L2 setup", SKIP, "target exposes no mcp-stdio surface")}
@@ -51,7 +59,11 @@ func RunL2(t *target.Target) []Result {
 	var out []Result
 	out = append(out, res("L2 tools/list", PASS, fmt.Sprintf("%d tools", len(tools))))
 
-	for _, p := range caps.Generate(tools) {
+	probes := caps.Generate(tools)
+	if extra != nil {
+		probes = append(probes, extra(tools)...)
+	}
+	for _, p := range probes {
 		s, err := client.Call(p.Tool, p.Args)
 		if err != nil {
 			out = append(out, res(fmt.Sprintf("L2 %s: %s", p.Tool, p.Label), FAIL, err.Error()))
