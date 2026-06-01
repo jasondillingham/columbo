@@ -378,7 +378,10 @@ check` and committed rounds are unchanged without the flags.
   differentiator leonard can't show: it SEPARATES distinct findings that share
   a Class (where structural over-merges) and merges near-identical. Live on
   leonard L2: 27 -> 2 clusters, matching structural (within-class cosine
-  ~0.896, cross-class ~0.82-0.84, threshold sits in the gap). Falls back to
+  ~0.896, cross-class ~0.82-0.84, threshold sits in the gap). Caveat (tested,
+  not overclaimed): single-linkage CAN chain a similarity gradient into an
+  over-merge — leonard's clean inter-class gap avoids it, but in general it's
+  why embed is opt-in and structural is the safe default. Falls back to
   structural on any embed error.
 - **LLM probe generation** (`caps.GenerateLLM`, `audit l2 --llm-probes N`):
   prompts a coder model with each tool's schema for adversarial JSON args.

@@ -50,6 +50,35 @@ func TestEmbedSeparatesWhatStructuralOverMerges(t *testing.T) {
 	}
 }
 
+// Documents single-linkage's known failure mode: a similarity GRADIENT chains.
+// A~B and B~C both clear the threshold while A~C does not, yet all three
+// collapse into one cluster (C becomes a false "+N more"). This is over-merge —
+// the audit anti-goal — via chaining. It is WHY structural stays the default
+// and embedding dedup is opt-in; the operator who asks for --dedup=embed is
+// choosing aggressive semantic merging and will review the result.
+func TestEmbedSingleLinkageChains(t *testing.T) {
+	// 2D unit vectors at 0deg, 25deg, 50deg: adjacent cosine ~0.906, ends ~0.643.
+	vmap := map[string][]float32{
+		"A": {1, 0},
+		"B": {0.9063, 0.4226},
+		"C": {0.6428, 0.7660},
+	}
+	emb := func(title string) ([]float32, error) { return vmap[title], nil }
+	fs := []findings.Finding{
+		{Severity: findings.Low, Title: "A", Locus: "a"},
+		{Severity: findings.Low, Title: "B", Locus: "b"},
+		{Severity: findings.Low, Title: "C", Locus: "c"},
+	}
+	got, err := DedupEmbed(fs, emb, 0.9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A~C is 0.643 < 0.9, but B bridges them -> single-linkage merges all 3.
+	if len(got) != 1 {
+		t.Errorf("single-linkage is expected to chain a gradient into 1 cluster, got %d (if this changed, the linkage strategy changed — re-evaluate the over-merge tradeoff)", len(got))
+	}
+}
+
 // The other direction: same-root findings whose titles are near-identical must
 // merge into one, with the loci preserved (no finding lost).
 func TestEmbedMergesNearIdentical(t *testing.T) {

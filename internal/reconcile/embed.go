@@ -35,10 +35,13 @@ func DedupEmbed(fs []findings.Finding, emb Embedder, threshold float64) ([]findi
 
 	// Greedy single-linkage clustering, within-severity, in first-appearance
 	// order (deterministic given the vectors). Single-linkage (join if similar
-	// to ANY cluster member, not just the first) is what lets near-identical
-	// titles chain into one cluster; comparing only to a representative
-	// under-merges. Safe here because the conservative threshold keeps a clear
-	// gap between distinct classes (no bridging).
+	// to ANY cluster member) merges near-identical titles well, but it CAN
+	// chain a similarity gradient (A~B, B~C, A~C below threshold -> all merge),
+	// which is over-merge. That tradeoff is deliberate: embedding dedup is
+	// opt-in for aggressive semantic merging; structural Dedup stays the
+	// conservative default. The conservative threshold limits chaining, and on
+	// targets with a clean inter-class gap (e.g. leonard) it does not bridge.
+	// See TestEmbedSingleLinkageChains.
 	type cluster struct {
 		members []findings.Finding
 		vecs    [][]float32
