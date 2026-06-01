@@ -1,0 +1,41 @@
+# Columbo target: bosun.
+# Hand-written, not sniffed. Captured against source HEAD on 2026-06-01.
+# This fixture is the one that catches Leonard-shaped assumptions: bosun's
+# build version is ldflags git-describe (dynamic, no pinned string), and it
+# carries a SEPARATE hardcoded ServerVersion const on the MCP surface.
+name: bosun
+repo: ../../bosun
+module: github.com/jasondillingham/bosun          # parse-only in v0.2
+
+baseline:
+  sha: 2ba6e71
+  build: "go build ./cmd/bosun"
+  test: "go test ./..."
+
+version:
+  # No `expected` / `command`: `bosun --version` is git-describe
+  # (-X main.version, e.g. v0.11.2-0.20260520...+dirty), so there is no
+  # pinned string to assert. P3 (binary version) SKIPs for this target.
+  sites:
+    # ServerVersion is the version the MCP serverInfo reports. It is a fixed
+    # const, distinct from the git-describe build version, so it carries its
+    # own `expect`. The live drift probe (serverInfo vs build version) is
+    # deferred to v0.3; v0.2 only asserts the source const is what we expect.
+    - { file: internal/mcp/server.go, symbol: ServerVersion, expect: "0.2.0-alpha" }
+
+surfaces:
+  - { kind: cli,      name: bosun,     command: ["bosun"] }
+  # bosun's MCP server binds a UNIX SOCKET (<repo>/.bosun/mcp.sock), not stdio.
+  # v0.3's MCP client is stdio-only, so L2/L6 SKIP against bosun. Unix-socket
+  # support is deferred to v0.4; until then this surface is unusable by the
+  # MCP lanes (and correctly labelled so they SKIP rather than hang/fail).
+  - { kind: mcp-unix, name: bosun-mcp, command: ["bosun", "mcp"] }
+
+threat_model: |                                    # parse-only in v0.2
+  Local advisory daemon + MCP surface. Trust boundary is the lockfile and the
+  usage-ledger state across concurrent edits. bosun bughunt-1 closed five
+  HIGHs; the live areas are lockfile races (Bundle B) and usage accounting
+  (Bundle D) under concurrent writers.
+
+history:                                           # parse-only in v0.2
+  - { round: bughunt-1, lens: "build invariants + lockfile + usage", findings: 5 }

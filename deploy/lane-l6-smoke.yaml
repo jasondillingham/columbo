@@ -1,0 +1,15 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: columbo-l6-smoke
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: l6
+          image: columbo:slim
+          imagePullPolicy: Never
+          args: ["audit", "lane", "l6", "/examples/columbo-cluster.target.yaml"]

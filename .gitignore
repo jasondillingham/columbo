@@ -1,0 +1,32 @@
+# Built binaries (Makefile drops them in the repo root)
+/columbo
+/columbo-mcp
+
+# Cross-compiled binaries staged for the container image (deploy/)
+/dist/
+
+# Local Columbo store (when we add it)
+.columbo/
+
+# Per-operator IDE / shell state
+.claude/
+.bosun/
+.leonard/
+
+# Go build artifacts
+*.test
+*.out
+coverage.out
+
+# Red-team sandbox that became Columbo. Kept in-tree as local seed material
+# (harness, fixtures, findings, runlog) but not committed. Carries its own
+# go.mod so it's a separate module and stays out of `go vet ./...`. The
+# reusable harness scripts are mirrored into seed/ for the parts worth keeping.
+/projectdogwalker/
+
+# Backups
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db

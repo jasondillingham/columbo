@@ -1,0 +1,11 @@
+# Keep the build context small: the image only needs dist/ + examples/.
+projectdogwalker/
+seed/
+audits/
+docs/
+*.md
+columbo
+columbo-mcp
+.git
+.claude
+.leonard

@@ -1,0 +1,18 @@
+# Step 2 smoke test: the dumbest possible pod. Proves the cluster can
+# pull-never-run the imported image and schedule it, isolated from anything
+# lane-related. Expect logs: "columbo version <v>".
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: columbo-version-smoke
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 120
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: version
+          image: columbo:slim
+          imagePullPolicy: Never
+          args: ["version"]

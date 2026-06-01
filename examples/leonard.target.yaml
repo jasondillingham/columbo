@@ -1,0 +1,39 @@
+# Columbo target: Leonard (per-project ground-truth MCP toolkit).
+# Hand-written, not sniffed. Captured against source HEAD on 2026-06-01.
+name: leonard
+repo: ../../leonard                              # relative to this file
+module: github.com/jasondillingham/leonard       # parse-only in v0.2
+
+baseline:
+  sha: cd6d8ef
+  build: "go build ./cmd/leonard ./cmd/leonard-hook ./cmd/leonard-mcp"
+  test: "go test ./..."
+
+version:
+  expected: "0.54.0"
+  # `go run` compiles from HEAD and runs in one step: always fresh, no stale
+  # binary, no artifact left in the target repo. Prints "leonard version 0.54.0".
+  command: ["go", "run", "./cmd/leonard", "--version"]
+  sites:
+    # Leonard duplicates the const across two command packages, no ldflags.
+    # The L1 invariant is that these two agree with `expected`. This exact
+    # duplication is the F001 drift class (Leonard bughunt-12).
+    - { file: cmd/leonard/root.go,      symbol: Version }
+    - { file: cmd/leonard-hook/root.go, symbol: Version }
+
+surfaces:
+  - { kind: cli,       name: leonard,      command: ["leonard"] }
+  # build: the lane compiles this once to a temp dir and runs it per probe.
+  # leonard-mcp needs cwd to contain a .leonard/ store; the leonard repo qualifies.
+  - { kind: mcp-stdio, name: leonard-mcp,  command: ["leonard-mcp"], build: "./cmd/leonard-mcp" }
+  - { kind: cli,       name: leonard-hook, command: ["leonard-hook"] }
+
+threat_model: |                                   # parse-only in v0.2
+  Local-first toolkit for Claude Code. The trust boundary is the project's
+  .leonard/ store plus the config-trust file. v0.52 moved the verifier-trust
+  file out of .leonard/ into $XDG_CONFIG_HOME so a .leonard/-write attack
+  cannot poison the verifier command. Probe: anything that lets untrusted
+  .leonard/ contents influence what the post-edit verifier executes.
+
+history:                                          # parse-only in v0.2
+  - { round: bughunt-12, lens: "build invariants + caps + protocol", findings: 5 }

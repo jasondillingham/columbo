@@ -1,0 +1,19 @@
+# Slice-2 cluster target: leonard fetched + built + store-init'd in the pod.
+# clone.url is public; baseline.sha pins a github SHA so a cluster run and a
+# local clone-path run audit byte-identical code (the diff-gate needs this).
+name: leonard
+repo: /unused                                    # overridden by the clone in pod/workdir mode
+clone:
+  url: https://github.com/jasondillingham/leonard
+  setup:
+    - "go build -o bin/ ./cmd/leonard ./cmd/leonard-hook ./cmd/leonard-mcp"
+    - "./bin/leonard init ."
+baseline:
+  sha: 1a8e0607f2e2a36b963ca90997c94b38e4875a80
+  build: "true"
+  test: "true"
+version:
+  sites:
+    - { file: cmd/leonard/root.go, symbol: Version, expect: "0.54.0" }
+surfaces:
+  - { kind: mcp-stdio, name: leonard-mcp, command: ["leonard-mcp"], build: "./cmd/leonard-mcp" }

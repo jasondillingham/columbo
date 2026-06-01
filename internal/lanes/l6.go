@@ -1,0 +1,149 @@
+package lanes
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/jasondillingham/columbo/internal/findings"
+	"github.com/jasondillingham/columbo/internal/probes/caps"
+	"github.com/jasondillingham/columbo/internal/probes/mcp"
+	"github.com/jasondillingham/columbo/internal/probes/protocol"
+	"github.com/jasondillingham/columbo/internal/target"
+)
+
+const l6ProbeTimeout = 5 * time.Second
+
+// RunL6 runs the L6 protocol-fuzz lane against the target's mcp-stdio surface.
+// It builds the server once to a temp dir, then sends each fuzz frame as raw
+// bytes after a handshake, one fresh process per probe.
+//
+// SKIPs cleanly when there is no mcp-stdio surface. FINDING on silent-drop of a
+// frame that should error (MEDIUM, F019/F021/F023/F025 class), on a zero
+// JSON-RPC error code (LOW, F004 class), or on a server panic (HIGH).
+func RunL6(t *target.Target) []Result {
+	surface, ok := t.MCPStdio()
+	if !ok {
+		return []Result{res("L6 setup", SKIP, "target exposes no mcp-stdio surface")}
+	}
+	argv, dir, cleanup, err := buildMCPServer(t, surface)
+	if err != nil {
+		return []Result{res("L6 setup", FAIL, err.Error())}
+	}
+	defer cleanup()
+
+	client := mcp.New(argv, dir, l6ProbeTimeout)
+	var out []Result
+	for _, p := range protocol.Probes() {
+		s, err := client.RawActions(true, mcp.Action{Bytes: []byte(p.Frame + "\n")})
+		if err != nil {
+			out = append(out, res("L6 "+p.Label, FAIL, err.Error()))
+			continue
+		}
+		out = append(out, classifyL6(surface, p, s))
+	}
+	return out
+}
+
+// classifyL6 maps one protocol probe's session to a verdict. Pure (no I/O):
+// reads only the session's captured stderr/responses, unit-testable with
+// synthetic sessions. Same shape as classifyL2.
+func classifyL6(surface target.Surface, p protocol.Probe, s *mcp.Session) Result {
+	probe := "L6 " + p.Label
+	if caps.Panicked(s.Stderr) {
+		return Result{probe, FINDING, "server panicked: " + tail(s.Stderr, 8),
+			&findings.Finding{
+				Severity:   findings.High,
+				Title:      fmt.Sprintf("MCP server panics on %s", p.Label),
+				Observed:   tail(s.Stderr, 8),
+				Expected:   "a clean JSON-RPC error, not a crash",
+				Reproducer: reproFrame(surface, p),
+				Class:      "server-panic",
+				Locus:      p.Label,
+			}}
+	}
+
+	switch p.Expect {
+	case protocol.NotSilent:
+		if respondedBeyondHandshake(s) {
+			return res(probe, PASS, "server responded (not silently dropped)")
+		}
+		return Result{probe, FINDING, "silently dropped (no JSON-RPC error response)",
+			&findings.Finding{
+				Severity:   findings.Medium, // F019/F021/F023/F025 silent-drop class
+				Title:      fmt.Sprintf("frame silently dropped, no error response: %s", p.Label),
+				Observed:   "no response beyond the handshake",
+				Expected:   "a JSON-RPC error (e.g. -32700 parse error), per JSON-RPC 2.0 §5",
+				Reproducer: reproFrame(surface, p),
+				Class:      "silent-drop",
+				Locus:      p.Label,
+			}}
+
+	case protocol.NonzeroCode:
+		f := s.Find(p.ID)
+		if f == nil {
+			return Result{probe, FINDING, "no response to the error-triggering frame",
+				&findings.Finding{
+					Severity:   findings.Medium,
+					Title:      fmt.Sprintf("no error response: %s", p.Label),
+					Observed:   fmt.Sprintf("no response for id=%d", p.ID),
+					Expected:   "a JSON-RPC error response",
+					Reproducer: reproFrame(surface, p),
+					Class:      "silent-drop",
+					Locus:      p.Label,
+				}}
+		}
+		code, isErr := errorCode(f)
+		if !isErr {
+			// Answered without an error: not the expected violation, but not a
+			// finding either (the server accepted it). Re-verified.
+			return res(probe, PASS, "answered without error")
+		}
+		if code == 0 {
+			return Result{probe, FINDING, "JSON-RPC error code is 0 (spec reserves nonzero)",
+				&findings.Finding{
+					Severity:   findings.Low, // F004 class
+					Title:      fmt.Sprintf("JSON-RPC error uses code:0 on %s", p.Label),
+					Observed:   "error code 0",
+					Expected:   "a nonzero JSON-RPC error code (e.g. -32601 / -32602)",
+					Reproducer: reproFrame(surface, p),
+					Class:      "jsonrpc-code-zero",
+					Locus:      p.Label,
+				}}
+		}
+		return res(probe, PASS, fmt.Sprintf("clean error, code %d", code))
+	}
+	return res(probe, PASS, "")
+}
+
+// respondedBeyondHandshake reports whether the server emitted any response
+// other than the handshake's initialize reply (id=1). A parse error with a
+// null id, or an answer to the probe frame, both count.
+func respondedBeyondHandshake(s *mcp.Session) bool {
+	for _, r := range s.Responses {
+		if n, ok := r["id"].(float64); ok && n == 1 {
+			continue // the handshake initialize reply
+		}
+		return true
+	}
+	return false
+}
+
+// errorCode extracts a JSON-RPC error code from a response frame.
+func errorCode(f mcp.Frame) (int, bool) {
+	e, ok := f["error"].(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	if c, ok := e["code"].(float64); ok {
+		return int(c), true
+	}
+	return 0, true // has an error object but no numeric code
+}
+
+func reproFrame(surface target.Surface, p protocol.Probe) string {
+	cmd := "leonard-mcp"
+	if len(surface.Command) > 0 {
+		cmd = surface.Command[0]
+	}
+	return fmt.Sprintf("%s | (handshake, then send raw) %s", cmd, oneLine(p.Frame))
+}

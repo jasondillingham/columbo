@@ -1,0 +1,18 @@
+# columbo:build — slice-2 image. The lane pod clones + builds + store-inits an
+# external target (e.g. leonard) in-pod, so the runtime needs the Go toolchain
+# and git.
+#
+# Alpine base on purpose: the debian golang:1.25 image's git links GnuTLS, which
+# fails the TLS/SNI handshake to github from this cluster ("server name sent was
+# not recognized"); Alpine's git (apk) uses a TLS stack that clones cleanly.
+# Go 1.25 because leonard's go.mod requires >=1.25 and the golang image pins
+# GOTOOLCHAIN=local. Static columbo binaries (CGO_ENABLED=0) run fine on musl.
+FROM golang:1.25-alpine
+
+RUN apk add --no-cache git
+
+COPY dist/columbo /usr/local/bin/columbo
+COPY dist/columbo-mcp /usr/local/bin/columbo-mcp
+COPY examples /examples
+
+ENTRYPOINT ["columbo"]

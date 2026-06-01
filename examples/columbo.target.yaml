@@ -1,0 +1,31 @@
+# Columbo target: Columbo itself (self-audit). Its MCP surface is columbo-mcp.
+# This is the dogfood target — DESIGN's "Columbo audits Columbo."
+name: columbo
+repo: ..                                          # relative to this file -> repo root
+module: github.com/jasondillingham/columbo
+
+baseline:
+  sha: dev
+  build: "go build ./cmd/columbo ./cmd/columbo-mcp"
+  test: "go test ./..."
+
+version:
+  expected: "0.1.0-pre"                           # the source default (and the injected value)
+  command: ["go", "run", "./cmd/columbo", "version"]
+  sites:
+    - { file: internal/version/version.go, symbol: Version }
+
+surfaces:
+  - { kind: cli,       name: columbo,     command: ["columbo"] }
+  # columbo-mcp serves the observe tools over stdio; it reads ./audits by default.
+  - { kind: mcp-stdio, name: columbo-mcp, command: ["columbo-mcp"], build: "./cmd/columbo-mcp" }
+
+threat_model: |
+  Columbo audits other tools and itself. The MCP observe surface (columbo-mcp)
+  is read-only over stdio; the risk classes it must not exhibit are exactly the
+  ones the lanes hunt: silent-drop of malformed frames, code:0 error responses,
+  unbounded reads. It was hand-built to avoid those — L6 here is a
+  discrimination test (PASS the correct server; the same lane FAILs
+  leonard-mcp's code:0), not a proof of correctness.
+
+history: []

@@ -1,0 +1,21 @@
+# Slice-1 cluster target: Columbo's own MCP server, run from the IN-IMAGE
+# binary (no clone, no build, no toolchain). The slim image ships columbo-mcp on
+# PATH, so the mcp-stdio surface has no `build:` — the lane runs the existing
+# binary directly. L6 against this is known-good (6 PASS, 0 findings), so any
+# deviation in a cluster run is a pipeline bug, not a target bug.
+name: columbo-self
+repo: /tmp                                   # cwd for the server; unused by L6 otherwise
+
+# L1/version fields are required by the loader but unused by L2/L6. Dummy values
+# that satisfy validation; this slice runs only L6 (and L2).
+baseline:
+  sha: dev
+  build: "true"
+  test: "true"
+version:
+  sites:
+    - { file: internal/version/version.go, symbol: Version, expect: "0.1.0-pre" }
+
+surfaces:
+  # No `build:` -> the lane runs the in-image binary at this absolute path.
+  - { kind: mcp-stdio, name: columbo-mcp, command: ["/usr/local/bin/columbo-mcp"] }
