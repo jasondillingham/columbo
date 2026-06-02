@@ -83,10 +83,14 @@ func TestReproduceConfirmsAndRefutes(t *testing.T) {
 	}
 
 	// Finalize: confirmed keeps severity; refuted downgrades to UNTRIAGED.
-	lr, err := s.Finalize("reason", "reason")
+	reports, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(reports) != 1 {
+		t.Fatalf("want 1 lane report (reason; no deterministic lanes set), got %d", len(reports))
+	}
+	lr := reports[0]
 	if len(lr.Findings) != 2 {
 		t.Fatalf("want 2 findings, got %d", len(lr.Findings))
 	}
@@ -116,7 +120,7 @@ func TestOutOfOrderCalls(t *testing.T) {
 	if _, err := s.Reproduce(1); err == nil {
 		t.Error("reproduce before start must error")
 	}
-	if _, err := s.Finalize("reason", "reason"); err == nil {
+	if _, err := s.Finalize(); err == nil {
 		t.Error("finalize before start must error")
 	}
 	if _, err := s.Start(t.TempDir()); err != nil {
@@ -125,8 +129,41 @@ func TestOutOfOrderCalls(t *testing.T) {
 	if _, err := s.Reproduce(99); err == nil {
 		t.Error("reproduce of an unknown id must error")
 	}
-	if _, err := s.Finalize("reason", "reason"); err == nil {
+	if _, err := s.Finalize(); err == nil {
 		t.Error("finalize of an empty round must refuse (no hollow clean round)")
+	}
+}
+
+// Slice 2: deterministic lanes set at start are folded into the round
+// alongside the reasoned lane.
+func TestFinalizeFoldsLaneFindings(t *testing.T) {
+	s := NewSession()
+	if _, err := s.Start(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	s.SetLaneFindings([]findings.LaneReport{
+		{Lane: "L2 caps", Slug: "caps", Findings: []findings.Finding{{Severity: findings.Low, Title: "a leak"}}},
+		{Lane: "L6 protocol", Slug: "protocol"},
+	})
+	s.Record(findings.Finding{Severity: findings.High, Title: "reasoned bug"}, Reproducer{})
+
+	reports, err := s.Finalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 deterministic lanes + 1 reason lane.
+	if len(reports) != 3 {
+		t.Fatalf("want 3 lane reports (L2, L6, reason), got %d", len(reports))
+	}
+	if reports[2].Slug != "reason" {
+		t.Errorf("reason lane should come last, got %q", reports[2].Slug)
+	}
+	// A round with only lane findings (no candidates) still finalizes.
+	s2 := NewSession()
+	s2.Start(t.TempDir())
+	s2.SetLaneFindings([]findings.LaneReport{{Lane: "L1", Slug: "build-invariants"}})
+	if r, err := s2.Finalize(); err != nil || len(r) != 1 {
+		t.Errorf("lanes-only round should finalize to 1 report, got %d (%v)", len(r), err)
 	}
 }
 

@@ -46,10 +46,11 @@ type Candidate struct {
 // columbo-mcp process). Not safe for concurrent use; the MCP server drives it
 // one call at a time.
 type Session struct {
-	dir        string // target root
-	open       bool
-	candidates []*Candidate
-	reproduce  int // wall-clock seconds budget per reproducer (0 -> default)
+	dir         string // target root
+	open        bool
+	candidates  []*Candidate
+	laneReports []findings.LaneReport // deterministic lanes run at start (slice 2)
+	reproduce   int                   // wall-clock seconds budget per reproducer (0 -> default)
 }
 
 func NewSession() *Session { return &Session{} }
@@ -67,8 +68,15 @@ func (s *Session) Start(dir string) (note string, err error) {
 	if s.open && len(s.candidates) > 0 {
 		note = fmt.Sprintf("discarded an in-progress round with %d unfinalized candidate(s)", len(s.candidates))
 	}
-	s.dir, s.open, s.candidates = abs, true, nil
+	s.dir, s.open, s.candidates, s.laneReports = abs, true, nil, nil
 	return note, nil
+}
+
+// SetLaneFindings attaches the deterministic-lane reports (L1/L2/L6) the
+// caller ran at start, so the session gets them for free and finalize folds
+// them into the round alongside the reasoned findings.
+func (s *Session) SetLaneFindings(reports []findings.LaneReport) {
+	s.laneReports = reports
 }
 
 // Record adds a session-reasoned candidate. Errors if no round is open.
@@ -112,32 +120,38 @@ func (s *Session) reproduceTimeout() time.Duration {
 	return 90 * time.Second
 }
 
-// Finalize converts the round into a findings.Round for the writer. Confirmed
-// candidates keep their declared severity; unconfirmed ones are downgraded to
-// UNTRIAGED (the firewall: only execution-confirmed findings are "confirmed").
-// Refuses an empty round rather than emit a hollow "clean" one.
-func (s *Session) Finalize(lane, slug string) (findings.LaneReport, error) {
+// Finalize returns the round's lane reports for the writer: the deterministic
+// lanes run at start (if any) plus a "reason" lane built from the reasoned
+// candidates. Confirmed candidates keep their declared severity; unconfirmed
+// ones are downgraded to UNTRIAGED (the firewall: only execution-confirmed
+// findings are "confirmed"). Refuses a truly empty round (no candidates AND no
+// lanes) rather than emit a hollow "clean" one.
+func (s *Session) Finalize() ([]findings.LaneReport, error) {
 	if !s.open {
-		return findings.LaneReport{}, fmt.Errorf("reason: no round open")
+		return nil, fmt.Errorf("reason: no round open")
 	}
-	if len(s.candidates) == 0 {
-		return findings.LaneReport{}, fmt.Errorf("reason: round has no candidates — nothing to finalize")
+	if len(s.candidates) == 0 && len(s.laneReports) == 0 {
+		return nil, fmt.Errorf("reason: round has no candidates and ran no lanes — nothing to finalize")
 	}
-	lr := findings.LaneReport{Lane: lane, Slug: slug}
-	for _, c := range s.candidates {
-		f := c.Finding
-		switch c.Status {
-		case Confirmed:
-			f.Status = "confirmed"
-		default:
-			// Not execution-confirmed: never claim a severity the run didn't back.
-			f.Severity = findings.Untriaged
-			f.Status = "unconfirmed (reproducer did not demonstrate it)"
+	out := append([]findings.LaneReport{}, s.laneReports...)
+	if len(s.candidates) > 0 {
+		lr := findings.LaneReport{Lane: "Reason (driven review)", Slug: "reason"}
+		for _, c := range s.candidates {
+			f := c.Finding
+			switch c.Status {
+			case Confirmed:
+				f.Status = "confirmed"
+			default:
+				// Not execution-confirmed: never claim a severity the run didn't back.
+				f.Severity = findings.Untriaged
+				f.Status = "unconfirmed (reproducer did not demonstrate it)"
+			}
+			lr.Findings = append(lr.Findings, f)
 		}
-		lr.Findings = append(lr.Findings, f)
+		out = append(out, lr)
 	}
 	s.open = false
-	return lr, nil
+	return out, nil
 }
 
 // Open reports whether a round is in progress (for tool status).

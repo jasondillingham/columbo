@@ -58,6 +58,92 @@ func TestReasonHarnessStatefulFlow(t *testing.T) {
 	}
 }
 
+// Slice 2 through the MCP surface: reason_start with a `target` runs the
+// deterministic lanes (L1/L2/L6) and folds them into the round. This is the
+// path the unit tests can't reach — they inject lane reports by hand; here the
+// handler actually loads the target.yaml and runs the lanes. A clean target
+// (build/test exit 0, version in sync, no MCP surface) yields zero findings but
+// three lane reports, proving the chain (target.Load -> RunL1/L2/L6 -> Report ->
+// SetLaneFindings -> Finalize) is wired, not just the helpers.
+func TestReasonStartWithTargetFoldsLanes(t *testing.T) {
+	dir := cleanTarget(t)
+
+	srv := mcpserver.New("columbo-mcp", "test")
+	registerReasonTools(srv, reason.NewSession())
+
+	frames := []string{
+		req(1, "initialize", map[string]any{}),
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		req(2, "tools/call", call("reason_start", map[string]any{
+			"dir": dir, "target": filepath.Join(dir, "target.yaml"),
+		})),
+		req(3, "tools/call", call("reason_finalize", map[string]any{})),
+	}
+
+	var out strings.Builder
+	if err := srv.Serve(strings.NewReader(strings.Join(frames, "\n")+"\n"), &out); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	resp := parseResults(t, out.String())
+
+	if isErr(resp[2]) {
+		t.Fatalf("reason_start errored: %s", text(resp[2]))
+	}
+	start := result(t, resp[2])
+	if _, ok := start["lanes_error"]; ok {
+		t.Fatalf("lanes should have run, got lanes_error: %v", start["lanes_error"])
+	}
+	lanes, ok := start["deterministic_lanes"].(map[string]any)
+	if !ok {
+		t.Fatalf("reason_start should report deterministic_lanes, got: %v", start)
+	}
+	for _, want := range []string{"L1 build invariants", "L2 caps", "L6 protocol"} {
+		if _, ok := lanes[want]; !ok {
+			t.Errorf("deterministic_lanes missing %q (got %v)", want, lanes)
+		}
+	}
+
+	// Finalize: no candidates, but three lane reports must still land as a round.
+	if isErr(resp[3]) {
+		t.Fatalf("reason_finalize errored: %s", text(resp[3]))
+	}
+	fin := result(t, resp[3])
+	if got := fin["lanes"]; got != float64(3) {
+		t.Errorf("round should carry 3 lane reports (L1/L2/L6, no reason candidates), got %v", got)
+	}
+	// The per-lane files prove the lanes were written, not just counted.
+	for _, slug := range []string{"build-invariants", "caps", "protocol"} {
+		if _, err := os.Stat(filepath.Join(dir, "audits", "bughunt-1-"+slug+".md")); err != nil {
+			t.Errorf("finalize should have written the %s lane file: %v", slug, err)
+		}
+	}
+}
+
+// cleanTarget builds a tiny repo + target.yaml that the deterministic lanes pass
+// cleanly: build/test are `true`, the version site is in sync, and there is no
+// MCP surface (so L2/L6 SKIP and L1's wire probes SKIP). Zero findings, three
+// lanes.
+func cleanTarget(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module cleanfix\n\ngo 1.21\n")
+	write(t, filepath.Join(dir, "version.go"), "package cleanfix\n\nconst Version = \"1.0.0\"\n")
+	write(t, filepath.Join(dir, "target.yaml"), strings.Join([]string{
+		"name: cleanfix",
+		"repo: .",
+		"baseline:",
+		"  build: \"true\"",
+		"  test: \"true\"",
+		"version:",
+		"  sites:",
+		"    - file: version.go",
+		"      symbol: Version",
+		"      expect: \"1.0.0\"",
+		"",
+	}, "\n"))
+	return dir
+}
+
 // --- frame helpers ---
 
 func req(id int, method string, params any) string {

@@ -111,7 +111,13 @@ lane integration. So:
   exits 0); a wrong candidate's reproducer fails → not confirmed. Not my
   say-so; the test run.
 
-Slice 2: fold `reason_start`'s deterministic-lane run (L1/L2/L6) into the round.
+Slice 2 (DONE): `reason_start` takes an optional `target` (a target.yaml path);
+when given it loads the target and runs the deterministic lanes (L1/L2/L6) via
+`internal/lanes`, attaches them with `Session.SetLaneFindings`, and `Finalize`
+folds them into the round alongside the reasoned "Reason (driven review)" lane.
+A lane-load failure is non-fatal (returned as `lanes_error`); the reason round
+still runs. A round with only lane findings (no candidates) still finalizes; a
+truly empty round (no candidates AND no lanes) is refused.
 
 This is Columbo's Driven control surface (the `audit_start`/`audit_promote` half
 DESIGN deferred), not "a lane": probe lanes (automated) + reason harness

@@ -14,9 +14,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jasondillingham/columbo/internal/findings"
+	"github.com/jasondillingham/columbo/internal/lanes"
 	"github.com/jasondillingham/columbo/internal/mcpserver"
 	"github.com/jasondillingham/columbo/internal/query"
 	"github.com/jasondillingham/columbo/internal/reason"
+	"github.com/jasondillingham/columbo/internal/target"
 	"github.com/jasondillingham/columbo/internal/version"
 )
 
@@ -129,13 +131,17 @@ func registerReasonTools(srv *mcpserver.Server, sess *reason.Session) {
 		Name: "reason_start",
 		Description: "Begin a red-team round against a directory. You (the session) read the code and find bugs; record each with reason_record, confirm it with reason_reproduce, then reason_finalize. Returns the round spec.",
 		InputSchema: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"dir": map[string]any{"type": "string", "description": "target repo/dir root to red-team"}},
-			"required":   []any{"dir"},
+			"type": "object",
+			"properties": map[string]any{
+				"dir":    map[string]any{"type": "string", "description": "target repo/dir root to red-team"},
+				"target": map[string]any{"type": "string", "description": "optional target.yaml path; it should describe the same code at `dir`. If given, the deterministic lanes (L1/L2/L6) run against the target and their findings are folded into the round so you can focus reasoning on what they can't reach"},
+			},
+			"required": []any{"dir"},
 		},
 		Handler: func(args json.RawMessage) (any, error) {
 			var a struct {
-				Dir string `json:"dir"`
+				Dir    string `json:"dir"`
+				Target string `json:"target"`
 			}
 			if err := json.Unmarshal(args, &a); err != nil {
 				return nil, fmt.Errorf("invalid args: dir is required")
@@ -144,12 +150,27 @@ func registerReasonTools(srv *mcpserver.Server, sess *reason.Session) {
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{
+			out := map[string]any{
 				"started": a.Dir,
 				"note":    note,
 				"how": "Read the code with your own tools. For each real bug, call reason_record with a Go-test reproducer that PASSES iff the bug is present (assert the bug's symptom). Then reason_reproduce(id): exit 0 => CONFIRMED, else not. Findings whose reproducer doesn't demonstrate the bug land UNTRIAGED, never confirmed. reason_finalize writes the round.",
 				"severity_scale": "CRITICAL|HIGH|MEDIUM|LOW (UNTRIAGED if you can't justify one — don't guess).",
-			}, nil
+			}
+			if a.Target != "" {
+				reports, lerr := runDeterministicLanes(a.Target)
+				if lerr != nil {
+					out["lanes_error"] = lerr.Error() // non-fatal: reason round still runs
+				} else {
+					sess.SetLaneFindings(reports)
+					summary := map[string]int{}
+					for _, lr := range reports {
+						summary[lr.Lane] = len(lr.Findings)
+					}
+					out["deterministic_lanes"] = summary
+					out["note_lanes"] = "L1/L2/L6 already ran; their findings are in the round. Focus your reasoning on cross-file logic they can't reach."
+				}
+			}
+			return out, nil
 		},
 	})
 
@@ -226,7 +247,7 @@ func registerReasonTools(srv *mcpserver.Server, sess *reason.Session) {
 		Description: "Write the round as bughunt-N-*.md under <target>/audits. Confirmed findings keep their severity; unconfirmed ones are written UNTRIAGED. Refuses an empty round.",
 		InputSchema: map[string]any{"type": "object"},
 		Handler: func(args json.RawMessage) (any, error) {
-			lr, err := sess.Finalize("Reason (driven review)", "reason")
+			reports, err := sess.Finalize()
 			if err != nil {
 				return nil, err
 			}
@@ -239,9 +260,13 @@ func registerReasonTools(srv *mcpserver.Server, sess *reason.Session) {
 					n = r + 1
 				}
 			}
+			total := 0
+			for _, lr := range reports {
+				total += len(lr.Findings)
+			}
 			round := &findings.Round{
 				Target: filepath.Base(dir), N: n, Date: time.Now().Format("2006-01-02"),
-				Lanes: []findings.LaneReport{lr},
+				Lanes: reports,
 			}
 			written, err := round.WriteRound(auditsDir, false)
 			if err != nil {
@@ -251,7 +276,22 @@ func registerReasonTools(srv *mcpserver.Server, sess *reason.Session) {
 			for i, p := range written {
 				names[i] = filepath.Base(p)
 			}
-			return map[string]any{"round": n, "dir": auditsDir, "files": names, "findings": len(lr.Findings)}, nil
+			return map[string]any{"round": n, "dir": auditsDir, "files": names, "findings": total, "lanes": len(reports)}, nil
 		},
 	})
+}
+
+// runDeterministicLanes loads a target.yaml and runs the automated lanes
+// (L1/L2/L6), returning their reports for the reason round to fold in. The
+// session then focuses its reasoning on what the lanes can't reach.
+func runDeterministicLanes(targetPath string) ([]findings.LaneReport, error) {
+	t, err := target.Load(targetPath)
+	if err != nil {
+		return nil, err
+	}
+	return []findings.LaneReport{
+		lanes.Report("L1 build invariants", "build-invariants", lanes.RunL1(t)),
+		lanes.Report("L2 caps", "caps", lanes.RunL2(t)),
+		lanes.Report("L6 protocol", "protocol", lanes.RunL6(t)),
+	}, nil
 }
