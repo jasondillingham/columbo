@@ -418,7 +418,40 @@ bug-source all session), claims "findings triaged, serious one fixed" — NOT
 **v1.0 done** — the proof-of-life: Columbo found a real HIGH in its own code
 (the bug it hunts) and closed it. The round is honest about its limits.
 
-**Beyond v1.0 (open follow-ups):** embedding dedup / LLM probes inside k3s
+## Generality test — third-party MCP server (2026-06-01)
+
+First time Columbo was pointed at a server it did NOT help build:
+`@modelcontextprotocol/server-everything` (official TypeScript reference
+server, 13 tools, no relation to the leonard family), launched via
+`npx ... stdio` (no build — surface.Command only).
+
+**Result: it generalizes, mechanically.** L6: 6 PASS, 0 FINDING — handshake,
+framing fuzz, and error-code checks all work against a non-Go, SDK-built
+server. L2 ran clean (no findings) before being stopped for slowness. Good
+discrimination: a well-built reference server passes while the same lanes find
+real leaks in leonard, so Columbo isn't just flagging everything.
+
+Two real limitations only a non-family target could reveal:
+
+- **Perf on launcher-based servers.** The deliberate fresh-process-per-probe
+  model is ~0.1s/spawn for a prebuilt Go binary but ~3s+/spawn for an
+  npx/uvx-launched (interpreted) server (runtime startup every probe). L2's
+  ~40 probes made the round take minutes. The build-once-to-temp optimization
+  that helps Go targets does not apply to launcher commands. Fix shape: a
+  persistent-server mode for slow-to-spawn targets (reuse one process across
+  probes) — tension with the fresh-per-probe design, so it's a real decision,
+  not a tweak.
+- **L6 grader coverage.** The unknown-tool probe read "answered without error"
+  because server-everything signals tool errors via an `isError` RESULT (a
+  valid MCP convention) rather than a JSON-RPC `error`; L6's NonzeroCode
+  grader only inspects `error`/code, so it can't tell "rejected via isError"
+  from "accepted." The family servers use JSON-RPC errors, so this never
+  showed before. L6 should classify the isError-result path too.
+
+These are findings about Columbo, surfaced by the experiment — exactly its
+value. Recorded, not yet fixed.
+
+## Beyond v1.0 (open follow-ups): embedding dedup / LLM probes inside k3s
 pods; threat-model extraction (the third local-model use); clone-retry for
 cluster egress; closing F004/F006 (build-to-tempdir for ldflags; a real
 L2-at-volume cluster round); a real `auto` run against the live leonard
