@@ -1,8 +1,44 @@
 # Columbo — current state
 
-Last touched: 2026-06-01. Picks up from a session that scaffolded the repo
-from zero. Same pattern as bosun's `STATUS.md`: where things are, what's
-next, anything at risk.
+Last touched: 2026-06-02. Same pattern as bosun's `STATUS.md`: where things
+are, what's next, anything at risk.
+
+## Reason harness + `/columbo` skill (2026-06-02) — the Driven surface
+
+Columbo now red-teams arbitrary Go code, driven by a Claude Code session. The
+session reasons (reads code, proposes bugs, writes reproducers); Columbo holds
+the round and CONFIRMS each finding by EXECUTING its reproducer in an isolated
+git worktree. The firewall: the session proposes, execution disposes. Only a
+reproducer that actually demonstrates the bug is "confirmed"; everything else
+finalizes UNTRIAGED.
+
+- `internal/reason/` — the harness. `Session` with `Start/Record/Reproduce/
+  Finalize`; `runner.go` isolates the target (`git worktree add --detach`, or
+  `cp -R` for non-git), writes the session's `_test.go`, runs `go test`. A
+  reproducer PASSES (exit 0) iff the bug is present.
+- `cmd/columbo-mcp` reason tools: `reason_start` (optional `target` runs the
+  deterministic lanes L1/L2/L6 and folds them in — slice 2), `reason_record`,
+  `reason_reproduce`, `reason_finalize`. Stateful over one persistent MCP
+  connection.
+- `skills/columbo/SKILL.md` — the `/columbo` skill that teaches a session the
+  start→hunt→record→reproduce→finalize loop. Installed to `~/.claude/skills/`
+  (fires from any project session) and shipped in-repo (generic, no site
+  values). The hunt section points the session at semantic/cross-file bugs the
+  probes can't reach, not the classes the lanes already automate.
+- Validated by a real from-the-text run against bosun's `internal/claims`
+  (unread that session): the loop confirmed a LOW finding by execution
+  (`go test ... ok`), wrote a valid `bughunt-N-*.md` round, left bosun's tree
+  untouched, leaked no reproducer file. The same dogfood run surfaced a real
+  bug in Columbo's OWN `reason_record` handler: the `fix_shape` arg lacked a
+  json tag, so the snake_case key silently didn't bind and the operator's fix
+  shape was dropped (the schema-vs-struct silent-accept class Columbo hunts).
+  Fixed with explicit tags on every field + `TestReasonRecordBindsAllArgs`.
+
+Plan + open decisions: `docs/reason-lane-plan.md`. Slices 1 and 2 are done.
+
+## Where it started
+
+Picked up from a session that scaffolded the repo from zero. History below.
 
 ## What's in this repo right now
 

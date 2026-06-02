@@ -144,6 +144,46 @@ func cleanTarget(t *testing.T) string {
 	return dir
 }
 
+// Regression: every reason_record arg the schema declares must bind to the
+// recorded finding. fix_shape is snake_case; without an explicit json tag on
+// the handler struct it silently does not bind (case-insensitive match doesn't
+// ignore the underscore) and the written finding shows the TODO placeholder.
+// Found by dogfooding the /columbo skill against bosun. The honesty firewall is
+// worth nothing if the record path drops the operator's words.
+func TestReasonRecordBindsAllArgs(t *testing.T) {
+	repo := bugRepo(t)
+	srv := mcpserver.New("columbo-mcp", "test")
+	registerReasonTools(srv, reason.NewSession())
+
+	frames := []string{
+		req(1, "initialize", map[string]any{}),
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		req(2, "tools/call", call("reason_start", map[string]any{"dir": repo})),
+		req(3, "tools/call", call("reason_record", map[string]any{
+			"title": "t", "severity": "LOW", "files": []string{"pkg/bug.go"},
+			"mechanism": "MECH", "expected": "EXP", "fix_shape": "FIX",
+			"repro_pkgdir": "pkg", "repro_run": "TestSumBug",
+			"repro_file": "package pkg\nimport \"testing\"\nfunc TestSumBug(t *testing.T){ if Sum(2,3) != 2 { t.Fatal(\"x\") } }\n",
+		})),
+		req(4, "tools/call", call("reason_reproduce", map[string]any{"id": 1})),
+		req(5, "tools/call", call("reason_finalize", map[string]any{})),
+	}
+	var out strings.Builder
+	if err := srv.Serve(strings.NewReader(strings.Join(frames, "\n")+"\n"), &out); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	// The written round must carry the fix shape and mechanism, not placeholders.
+	body, err := os.ReadFile(filepath.Join(repo, "audits", "bughunt-1-reason.md"))
+	if err != nil {
+		t.Fatalf("read round: %v", err)
+	}
+	for _, want := range []string{"FIX", "MECH", "EXP"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("recorded arg %q did not reach the written finding (silently dropped):\n%s", want, body)
+		}
+	}
+}
+
 // --- frame helpers ---
 
 func req(id int, method string, params any) string {

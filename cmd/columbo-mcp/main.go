@@ -193,12 +193,21 @@ func registerReasonTools(srv *mcpserver.Server, sess *reason.Session) {
 			"required": []any{"title", "repro_pkgdir", "repro_run", "repro_file"},
 		},
 		Handler: func(args json.RawMessage) (any, error) {
+			// Every field carries an explicit json tag matching the schema.
+			// Without one, a snake_case arg like `fix_shape` does NOT bind to
+			// field FixShape (Go's json match is case-insensitive but does not
+			// ignore the underscore), so the value would be silently dropped —
+			// the schema-vs-struct drift / silent-accept class Columbo hunts.
 			var a struct {
-				Title, Severity, Mechanism, Expected, FixShape string
-				Files                                          []string
-				ReproPkgdir                                    string `json:"repro_pkgdir"`
-				ReproRun                                       string `json:"repro_run"`
-				ReproFile                                      string `json:"repro_file"`
+				Title       string   `json:"title"`
+				Severity    string   `json:"severity"`
+				Mechanism   string   `json:"mechanism"`
+				Expected    string   `json:"expected"`
+				FixShape    string   `json:"fix_shape"`
+				Files       []string `json:"files"`
+				ReproPkgdir string   `json:"repro_pkgdir"`
+				ReproRun    string   `json:"repro_run"`
+				ReproFile   string   `json:"repro_file"`
 			}
 			if err := json.Unmarshal(args, &a); err != nil {
 				return nil, fmt.Errorf("invalid args: %w", err)
