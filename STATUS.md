@@ -418,6 +418,36 @@ bug-source all session), claims "findings triaged, serious one fixed" — NOT
 **v1.0 done** — the proof-of-life: Columbo found a real HIGH in its own code
 (the bug it hunts) and closed it. The round is honest about its limits.
 
+## NEW DIRECTION (post-v1.0): reason harness — Columbo red-teams CODE (2026-06-02)
+
+The pivot from "audit MCP servers" toward DESIGN's actual goal: find the
+cross-file root-cause bugs in a target's SOURCE. Architecture (operator's
+call): **Columbo is the harness, the Claude Code session is the reasoner** — no
+Anthropic API client, no key. "Fire off columbo from a session, point it at a
+dir." This is the Driven control surface DESIGN deferred (`audit_start`/
+`audit_promote`), realized. Plan: `docs/reason-lane-plan.md`.
+
+- `internal/reason/` — in-memory round + the **reproducer engine** (the crux):
+  the session records a candidate with a Go-test reproducer that PASSES iff the
+  bug is present; Columbo runs it in an ISOLATED `git worktree` (never the live
+  tree, bounded subprocess) and CONFIRMS by execution. Session proposes,
+  execution disposes; unconfirmed → UNTRIAGED, never faked. Tested: a real bug
+  confirms, an imagined one is refuted, the live repo is untouched, and
+  out-of-order calls error cleanly (no panics).
+- `columbo-mcp` gains active tools `reason_start / reason_record /
+  reason_reproduce / reason_finalize`. STATEFUL — they rely on the persistent
+  MCP connection a Claude Code session holds (one server process, many calls);
+  proven end-to-end driving one `Serve` through start->record->reproduce->
+  finalize, writing a real `bughunt-N` round.
+- **Slice 1 done** (record->reproduce->finalize + the tools + isolation).
+  Slice 2: fold `reason_start`'s deterministic-lane run (L1/L2/L6) into the
+  round so the session gets those for free. Then the real validation: drive it
+  from a session against a leonard/bosun region whose bugs aren't pre-read, and
+  measure the confirmed:UNTRIAGED ratio (decides autonomous-confirmer vs
+  human-review-assistant).
+
+`make check` green (incl. `internal/reason`).
+
 ## Generality test — third-party MCP server (2026-06-01)
 
 First time Columbo was pointed at a server it did NOT help build:
