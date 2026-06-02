@@ -448,6 +448,28 @@ dir." This is the Driven control surface DESIGN deferred (`audit_start`/
 
 `make check` green (incl. `internal/reason`).
 
+**Real validation (2026-06-02): the harness works on real code.** Drove the
+ACTUAL `columbo-mcp` over one persistent stdin connection (as a session's
+connection works) against the live leonard repo, `internal/store`:
+- **Confirmed** a real finding by execution: `FindSymbolsByQuery`'s godoc says
+  "case-sensitive substring search," but it uses SQLite `LIKE` (case-
+  insensitive for ASCII) — the reproducer (`"foobar"` matches `FooBar`) ran and
+  passed. Real LOW bug in leonard (doc/impl mismatch; behavior matches the
+  user-facing tool contract, so it's a misleading internal comment).
+- **Refuted** a wrong hypothesis by execution: a "`%` wildcard injection" guess
+  was killed because `escapeLike` actually escapes it — the reproducer failed,
+  so the candidate did NOT land confirmed. The slop firewall worked.
+- leonard's tree untouched (reproducers ran in isolated worktrees; no leaked
+  files, no round written — finalize skipped to avoid writing into the repo).
+
+Honest lessons: (1) on heavily-audited code (leonard's store cites multiple
+security reviews in-comment), the reasoning surfaced a LOW, not a HIGH —
+finding serious bugs in well-reviewed code is hard, and the refute-half (killing
+false positives) is as valuable as the confirm-half. (2) Both candidates got
+runnable reproducers here (1 confirm, 1 refute), so reproducer-grounding was
+achievable; the broader confirmed:UNTRIAGED ratio across messier findings is
+still the open question.
+
 ## Generality test — third-party MCP server (2026-06-01)
 
 First time Columbo was pointed at a server it did NOT help build:
