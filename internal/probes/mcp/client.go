@@ -26,6 +26,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -314,34 +315,25 @@ func (c *Client) run(actions []Action) (*Session, error) {
 		return nil, err
 	}
 
-	// Reader goroutine: newline-framed, capped, ignores blank lines.
+	// Reader goroutine: newline-framed, BOUNDED, ignores blank lines.
 	// readerDone lets us join the goroutine before cmd.Wait() (os/exec requires
 	// all reads to finish first).
 	//
-	// KNOWN LIMITATION (F018 class, the very bug Columbo hunts): ReadBytes
-	// buffers an unterminated line in its own internal buffer without bound, so
-	// the maxBytes check below only fires *after* a full line returns. A target
-	// that floods bytes with no newline can grow that buffer until the client
-	// OOMs. Acceptable for v0.3 because targets are trusted (leonard/bosun/
-	// columbo); when Columbo audits its own MCP client this is a known finding,
-	// not a surprise. Fix shape: read fixed chunks with a manual delimiter scan
-	// and an enforced cap. Tracked for the self-audit.
+	// F018 (bughunt-1 F001, closed): a target that floods bytes with no newline
+	// must not grow the reader's buffer without bound. readCappedLine reads at
+	// most maxBytes before a newline; an over-cap line is dropped (drained to
+	// the next newline), never buffered to OOM.
 	lines := make(chan string, 64)
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
 		defer close(lines)
 		r := bufio.NewReader(stdout)
-		total := 0
 		for {
-			b, err := r.ReadBytes('\n')
-			if len(b) > 0 {
-				total += len(b)
-				if s := strings.TrimRight(string(b), "\n"); strings.TrimSpace(s) != "" {
+			line, tooLong, err := readCappedLine(r, maxBytes)
+			if !tooLong {
+				if s := strings.TrimSpace(string(line)); s != "" {
 					lines <- s
-				}
-				if total > maxBytes {
-					return
 				}
 			}
 			if err != nil {
@@ -424,4 +416,35 @@ drain:
 		}
 	}
 	return &sess, nil
+}
+
+// readCappedLine reads one newline-terminated line, bounded at max bytes. A
+// line longer than max returns tooLong=true after draining to the next
+// newline, so a no-newline flood is bounded (the F018 guard) instead of
+// buffered until OOM. ReadByte is served from bufio's buffer, so this is not a
+// syscall per byte.
+func readCappedLine(r *bufio.Reader, max int) (line []byte, tooLong bool, err error) {
+	var buf []byte
+	for {
+		b, e := r.ReadByte()
+		if e != nil {
+			if len(buf) > 0 && e == io.EOF {
+				return buf, false, nil
+			}
+			return nil, false, e
+		}
+		if b == '\n' {
+			return buf, false, nil
+		}
+		if len(buf) >= max {
+			for {
+				bb, de := r.ReadByte()
+				if de != nil || bb == '\n' {
+					break
+				}
+			}
+			return nil, true, nil
+		}
+		buf = append(buf, b)
+	}
 }

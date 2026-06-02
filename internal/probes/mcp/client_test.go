@@ -161,6 +161,24 @@ func TestNoHandshakeTotalSilence(t *testing.T) {
 	}
 }
 
+// F018 fix: a no-newline flood must be BOUNDED — readCappedLine drops the
+// over-cap line (drains to the next newline) instead of buffering to OOM, and
+// recovers to the next frame. (Before the fix, ReadBytes buffered unbounded.)
+func TestReadCappedLineBounds(t *testing.T) {
+	in := bufio.NewReader(strings.NewReader(strings.Repeat("A", 5000) + "\n" + "{\"ok\":1}\n"))
+	line, tooLong, err := readCappedLine(in, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tooLong || line != nil {
+		t.Errorf("5000-byte line with cap 100 must be tooLong + dropped, got len=%d tooLong=%v", len(line), tooLong)
+	}
+	line2, tooLong2, _ := readCappedLine(in, 100)
+	if tooLong2 || string(line2) != `{"ok":1}` {
+		t.Errorf("reader must recover to the next frame, got %q tooLong=%v", line2, tooLong2)
+	}
+}
+
 // A server that floods stdout without pause must not hang or leak the reader:
 // the client stops at the deadline, unblocks the reader, and returns.
 func TestFloodDoesNotHang(t *testing.T) {

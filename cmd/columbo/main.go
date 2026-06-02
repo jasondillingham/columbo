@@ -404,22 +404,25 @@ internal packages get filled in.`,
 			repo := t.RepoPath()
 			auditsDir := filepath.Join(repo, "audits")
 
-			laneIDs := strings.Split(aLanes, ",")
-			reports := gatherReports(t, laneIDs, aK3s, aImage, aPath)
-
-			// Reconcile (autonomous always produces a clean deliverable).
-			rawTotal := 0
-			for i := range reports {
-				rawTotal += len(reports[i].Findings)
-				reports[i].Findings = reconcile.Dedup(reports[i].Findings)
-			}
-
+			// Resolve the round number FIRST so k3s Job names carry it
+			// (gatherReports threads it into RunLane); computing it after the
+			// run is what left auto --k3s Jobs named columbo-r0-*.
 			round := aRound
 			if round == 0 {
 				wt, _ := query.Rounds(auditsDir) // missing dir -> nil, fine
 				if round, err = autonomous.NextRound(repo, wt); err != nil {
 					return err
 				}
+			}
+
+			laneIDs := strings.Split(aLanes, ",")
+			reports := gatherReports(t, round, laneIDs, aK3s, aImage, aPath)
+
+			// Reconcile (autonomous always produces a clean deliverable).
+			rawTotal := 0
+			for i := range reports {
+				rawTotal += len(reports[i].Findings)
+				reports[i].Findings = reconcile.Dedup(reports[i].Findings)
 			}
 
 			// Guardrails: reports first, then the dirty-tree git check.
@@ -521,13 +524,13 @@ func dedupFindings(mode string, client *ollama.Client, embedModel string, fs []f
 // returns one raw LaneReport per lane, in lane order. No printing, no dedup,
 // no write — the caller decides. Unknown lane ids yield a Failed report so the
 // guardrails treat them honestly.
-func gatherReports(t *target.Target, laneIDs []string, k3s bool, image, path string) []findings.LaneReport {
+func gatherReports(t *target.Target, round int, laneIDs []string, k3s bool, image, path string) []findings.LaneReport {
 	if k3s {
 		thunks := make([]func() findings.LaneReport, len(laneIDs))
 		for i, id := range laneIDs {
 			id, d := strings.TrimSpace(id), laneSpec(strings.TrimSpace(id), t)
 			thunks[i] = func() findings.LaneReport {
-				return k3srunner.RunLane(0, id, d.name, d.slug, image, path, 5*time.Minute)
+				return k3srunner.RunLane(round, id, d.name, d.slug, image, path, 5*time.Minute)
 			}
 		}
 		return orchestrator.RunParallel(thunks)

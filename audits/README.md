@@ -10,7 +10,10 @@ the next minor version tag.
 
 ## Index
 
-(Empty until the first round runs.)
+- **bughunt-1** (2026-06-01) — first self-audit. 6 findings (1 HIGH, 5 LOW);
+  the HIGH (F001: unbounded read in Columbo's own MCP client — the F018 class
+  Columbo hunts) fixed in-round, F002 fixed, F003–F006 LOW recorded with
+  rationale. Driven mode. See `bughunt-1-brief.md` / `bughunt-1-findings.md`.
 
 ## How rounds are structured
 

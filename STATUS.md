@@ -396,11 +396,35 @@ check` and committed rounds are unchanged without the flags.
 **v0.7 done.** `make check` green (incl. `internal/ollama`); defaults unchanged
 without the flags.
 
-**Next (toward v1.0 = self-audit clean):** embedding dedup / LLM probes inside
-k3s pods; threat-model extraction (the third local-model use); clone-retry for
-cluster egress; the `auto --k3s` round-number fix; a real `auto` run against
-the live leonard checkout (writes a branch in the operator's repo — needs a
-go-ahead).
+## v1.0 — self-audit: bughunt-1 against columbo, clean (2026-06-01)
+
+`docs/v1.0-plan.md`; round in `audits/bughunt-1-*.md`. Driven mode, honest
+about the author==auditor conflict: leads with execution (the reliable
+bug-source all session), claims "findings triaged, serious one fixed" — NOT
+"columbo is bug-free."
+
+- Automated lanes vs `examples/columbo.target.yaml`: **16 PASS, 0 FINDING** (the
+  MCP surface was the v0.5 discrimination test; lanes can't reach the codebase
+  — that's the point, not a clean bill).
+- 6 findings, all from execution/review: **F001 HIGH — unbounded `ReadBytes`
+  in Columbo's OWN MCP client (the F018 class Columbo hunts), fixed in-round**
+  (`readCappedLine`, bounded; `TestReadCappedLineBounds`). F002 LOW (`auto
+  --k3s` Job names ignored the round number) — fixed (thread round through
+  `gatherReports`). F003–F006 LOW (embed single-linkage chaining; L1 P3
+  ldflags blindness; build-artifact dirties tree; L2-at-volume sentinel
+  unverified) — recorded with rationale, no fake "fixed."
+- No open CRITICAL/HIGH. `make check` green; the two fixes are tested.
+
+**v1.0 done** — the proof-of-life: Columbo found a real HIGH in its own code
+(the bug it hunts) and closed it. The round is honest about its limits.
+
+**Beyond v1.0 (open follow-ups):** embedding dedup / LLM probes inside k3s
+pods; threat-model extraction (the third local-model use); clone-retry for
+cluster egress; closing F004/F006 (build-to-tempdir for ldflags; a real
+L2-at-volume cluster round); a real `auto` run against the live leonard
+checkout (writes a branch in the operator's repo — needs a go-ahead). And the
+honest big one: the cross-file bug-reasoning auditor DESIGN aims at is still
+not built — v1.0 proves the harness, not that frontier capability.
 
 ## Verified clean as of last touch
 
