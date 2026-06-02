@@ -425,31 +425,29 @@ First time Columbo was pointed at a server it did NOT help build:
 server, 13 tools, no relation to the leonard family), launched via
 `npx ... stdio` (no build — surface.Command only).
 
-**Result: it generalizes, mechanically.** L6: 6 PASS, 0 FINDING — handshake,
-framing fuzz, and error-code checks all work against a non-Go, SDK-built
-server. L2 ran clean (no findings) before being stopped for slowness. Good
-discrimination: a well-built reference server passes while the same lanes find
-real leaks in leonard, so Columbo isn't just flagging everything.
+**Result: it generalizes AND discriminates.** L6: 6 PASS. L2: 46 PASS, 0
+FINDING. Handshake, schema-driven cap fuzz, framing fuzz, and error-code checks
+all work against a non-Go, SDK-built server, and the well-built reference
+server passes while the same lanes find real leaks in leonard — so Columbo
+isn't just flagging everything.
 
-Two real limitations only a non-family target could reveal:
+The two issues it surfaced, both resolved:
 
-- **Perf on launcher-based servers.** The deliberate fresh-process-per-probe
-  model is ~0.1s/spawn for a prebuilt Go binary but ~3s+/spawn for an
-  npx/uvx-launched (interpreted) server (runtime startup every probe). L2's
-  ~40 probes made the round take minutes. The build-once-to-temp optimization
-  that helps Go targets does not apply to launcher commands. Fix shape: a
-  persistent-server mode for slow-to-spawn targets (reuse one process across
-  probes) — tension with the fresh-per-probe design, so it's a real decision,
-  not a tweak.
-- **L6 grader coverage.** The unknown-tool probe read "answered without error"
-  because server-everything signals tool errors via an `isError` RESULT (a
-  valid MCP convention) rather than a JSON-RPC `error`; L6's NonzeroCode
-  grader only inspects `error`/code, so it can't tell "rejected via isError"
-  from "accepted." The family servers use JSON-RPC errors, so this never
-  showed before. L6 should classify the isError-result path too.
-
-These are findings about Columbo, surfaced by the experiment — exactly its
-value. Recorded, not yet fixed.
+- **L6 grader coverage — FIXED.** The unknown-tool probe read "answered without
+  error" because server-everything rejects via an `isError` RESULT (a valid MCP
+  convention), not a JSON-RPC `error`. L6 now classifies three outcomes:
+  JSON-RPC error (nonzero PASS / code:0 FINDING), isError-result rejection
+  (PASS), and a genuine accept (success result for what should be rejected ->
+  MEDIUM `accepts-invalid`). Verified live: now "rejected via isError result".
+- **"Slow on launcher servers" — MISDIAGNOSED, no code needed.** The ~3s/probe
+  was `npx -y` re-resolving the package against the registry on every spawn,
+  NOT the per-probe model. Measured: `npx -y` ~0.68s (≈3s cold) vs a resolved
+  `node <bin>` spawn **0.14s** — same ballpark as a Go binary. Re-run with the
+  resolved binary: full L2 in ~36s. So per-probe is fine for interpreted
+  servers; the fix is target authoring (point `command:` at the resolved
+  launcher, not `npx -y`), documented on `Surface.Command`. The
+  persistent-session refactor I nearly built was unwarranted — the premise was
+  wrong, caught by measuring before coding.
 
 ## Beyond v1.0 (open follow-ups): embedding dedup / LLM probes inside k3s
 pods; threat-model extraction (the third local-model use); clone-retry for

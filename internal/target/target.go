@@ -69,8 +69,15 @@ type VersionSite struct {
 
 // Surface is one interface the target exposes.
 type Surface struct {
-	Kind    string   `yaml:"kind"`
-	Name    string   `yaml:"name"`
+	Kind string `yaml:"kind"`
+	Name string `yaml:"name"`
+	// Command launches the server; the MCP lanes spawn it fresh PER PROBE. Make
+	// it resolve fast: per-probe spawn is ~0.1-0.15s for a compiled binary or a
+	// resolved `node <path>` / `python -m`, but `npx -y pkg` / `uvx pkg`
+	// re-resolve against the registry on EVERY spawn (~0.7s warm, seconds cold),
+	// which makes a lane crawl. For a launcher-based server, point Command at
+	// the resolved binary (e.g. the path `npx` resolved to) or use
+	// `npx --no-install`, not `npx -y`.
 	Command []string `yaml:"command"`
 	// Build, when set, is the Go package the MCP/CLI lanes compile once to a
 	// temp dir (e.g. "./cmd/leonard-mcp"), then run per probe — fresh from
