@@ -63,6 +63,13 @@ func fakeServer() {
 				for i := 0; ; i++ {
 					fmt.Printf(`{"jsonrpc":"2.0","id":%s,"result":{"n":%d}}`+"\n", id, i)
 				}
+			case "noflood":
+				// Flood stdout with NO newline forever (the F018 exploit). The
+				// bounded reader must contain it; the client must still return.
+				buf := strings.Repeat("A", 65536)
+				for {
+					fmt.Print(buf)
+				}
 			default:
 				fmt.Printf(`{"jsonrpc":"2.0","id":%s,"result":{"echo":true}}`+"\n", id)
 			}
@@ -201,6 +208,27 @@ func TestFloodDoesNotHang(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("client hung on a flooding server")
+	}
+}
+
+// F001 / F018, integrated: a server flooding stdout with NO newline must be
+// CONTAINED by the bounded reader — the client returns at the deadline instead
+// of buffering to OOM or hanging forever. This exercises the real reader path
+// (the ReadBytes -> readCappedLine swap), not just the helper in isolation.
+func TestNoNewlineFloodIsContained(t *testing.T) {
+	c := fakeClient(800 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		_, err := c.Call("noflood", nil)
+		if err != nil {
+			t.Errorf("Call: %v", err)
+		}
+		close(done)
+	}()
+	select {
+	case <-done: // returned at the deadline, bounded — good
+	case <-time.After(10 * time.Second):
+		t.Fatal("client hung on a no-newline flood (F018 not contained)")
 	}
 }
 
