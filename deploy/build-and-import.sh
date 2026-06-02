@@ -15,6 +15,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Operator-local, gitignored config (hosts/IPs/ssh targets). Sourced if present
+# so the site-specific values live off GitHub. See deploy/local.env.example.
+[ -f deploy/local.env ] && source deploy/local.env
+
 IMAGE="${IMAGE:-columbo:slim}"
 DOCKERFILE="${DOCKERFILE:-deploy/Dockerfile}"
 BUILDER="${COLUMBO_BUILDER:?set COLUMBO_BUILDER to an amd64 docker host, e.g. user@host}"

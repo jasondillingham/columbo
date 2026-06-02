@@ -13,6 +13,12 @@
 .bosun/
 .leonard/
 
+# Operator-local, never on GitHub: agent instructions (may name homelab infra)
+# and the local config holding site-specific hosts/IPs/ssh targets.
+CLAUDE.md
+deploy/local.env
+*.local.env
+
 # Go build artifacts
 *.test
 *.out

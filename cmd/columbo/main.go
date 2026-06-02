@@ -177,7 +177,7 @@ internal packages get filled in.`,
 	l2Cmd.Flags().StringVar(&l2Out, "out", "", "output dir (default: <target repo>/audits)")
 	l2Cmd.Flags().BoolVar(&l2Force, "force", false, "overwrite existing bughunt-N files")
 	l2Cmd.Flags().IntVar(&l2LLM, "llm-probes", 0, "N LLM-generated adversarial probes per tool (0 = off; needs --ollama)")
-	l2Cmd.Flags().StringVar(&l2Ollama, "ollama", "", "Ollama host URL for --llm-probes")
+	l2Cmd.Flags().StringVar(&l2Ollama, "ollama", os.Getenv("COLUMBO_OLLAMA"), "Ollama host URL for --llm-probes (default $COLUMBO_OLLAMA)")
 	l2Cmd.Flags().StringVar(&l2GenModel, "gen-model", "qwen2.5-coder:7b", "generation model for --llm-probes")
 	auditCmd.AddCommand(l2Cmd)
 
@@ -377,7 +377,7 @@ internal packages get filled in.`,
 	roundCmd.Flags().StringVar(&rPath, "target-path", "/examples/columbo-cluster.target.yaml", "target.yaml path INSIDE the image (--k3s)")
 	roundCmd.Flags().StringVar(&rLanes, "lanes", "l1,l2,l6", "comma-separated lanes to run")
 	roundCmd.Flags().StringVar(&rDedup, "dedup", "structural", "dedup mode: structural | embed")
-	roundCmd.Flags().StringVar(&rOllama, "ollama", "", "Ollama host URL for --dedup=embed (e.g. http://host:11434)")
+	roundCmd.Flags().StringVar(&rOllama, "ollama", os.Getenv("COLUMBO_OLLAMA"), "Ollama host URL for --dedup=embed (default $COLUMBO_OLLAMA)")
 	roundCmd.Flags().StringVar(&rEmbedModel, "embed-model", "nomic-embed-text", "embedding model for --dedup=embed")
 	auditCmd.AddCommand(roundCmd)
 
