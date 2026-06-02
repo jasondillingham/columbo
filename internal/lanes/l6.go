@@ -92,25 +92,42 @@ func classifyL6(surface target.Surface, p protocol.Probe, s *mcp.Session) Result
 					Locus:      p.Label,
 				}}
 		}
-		code, isErr := errorCode(f)
-		if !isErr {
-			// Answered without an error: not the expected violation, but not a
-			// finding either (the server accepted it). Re-verified.
-			return res(probe, PASS, "answered without error")
+		// A "must be rejected" frame can be rejected two valid ways: a JSON-RPC
+		// error, OR a tool result with isError:true (the MCP SDK convention).
+		// Both are clean rejections. The actual violation is being ACCEPTED — a
+		// success result for something that should have been refused.
+		if code, isErr := errorCode(f); isErr {
+			if code == 0 {
+				return Result{probe, FINDING, "JSON-RPC error code is 0 (spec reserves nonzero)",
+					&findings.Finding{
+						Severity:   findings.Low, // F004 class
+						Title:      fmt.Sprintf("JSON-RPC error uses code:0 on %s", p.Label),
+						Observed:   "error code 0",
+						Expected:   "a nonzero JSON-RPC error code (e.g. -32601 / -32602)",
+						Reproducer: reproFrame(surface, p),
+						Class:      "jsonrpc-code-zero",
+						Locus:      p.Label,
+					}}
+			}
+			return res(probe, PASS, fmt.Sprintf("clean error, code %d", code))
 		}
-		if code == 0 {
-			return Result{probe, FINDING, "JSON-RPC error code is 0 (spec reserves nonzero)",
-				&findings.Finding{
-					Severity:   findings.Low, // F004 class
-					Title:      fmt.Sprintf("JSON-RPC error uses code:0 on %s", p.Label),
-					Observed:   "error code 0",
-					Expected:   "a nonzero JSON-RPC error code (e.g. -32601 / -32602)",
-					Reproducer: reproFrame(surface, p),
-					Class:      "jsonrpc-code-zero",
-					Locus:      p.Label,
-				}}
+		if resultIsError(f) {
+			// Rejected via an isError result — a valid MCP convention, not a
+			// finding. (Previously misread as "answered without error".)
+			return res(probe, PASS, "rejected via isError result")
 		}
-		return res(probe, PASS, fmt.Sprintf("clean error, code %d", code))
+		// No JSON-RPC error and isError is false/absent: the server ACCEPTED an
+		// input it should have rejected (e.g. an unknown tool returning success).
+		return Result{probe, FINDING, "accepted (no error, isError not set) — should have been rejected",
+			&findings.Finding{
+				Severity:   findings.Medium,
+				Title:      fmt.Sprintf("server accepted what it should reject: %s", p.Label),
+				Observed:   "success result, no JSON-RPC error and isError not set",
+				Expected:   "a rejection — JSON-RPC error or an isError result",
+				Reproducer: reproFrame(surface, p),
+				Class:      "accepts-invalid",
+				Locus:      p.Label,
+			}}
 	}
 	return res(probe, PASS, "")
 }
@@ -138,6 +155,17 @@ func errorCode(f mcp.Frame) (int, bool) {
 		return int(c), true
 	}
 	return 0, true // has an error object but no numeric code
+}
+
+// resultIsError reports whether the frame is a tool result flagged isError:true
+// (the MCP convention for a tool-level rejection, distinct from a JSON-RPC error).
+func resultIsError(f mcp.Frame) bool {
+	res, ok := f["result"].(map[string]any)
+	if !ok {
+		return false
+	}
+	ie, _ := res["isError"].(bool)
+	return ie
 }
 
 func reproFrame(surface target.Surface, p protocol.Probe) string {
