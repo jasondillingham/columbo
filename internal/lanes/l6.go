@@ -1,6 +1,7 @@
 package lanes
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -135,12 +136,25 @@ func classifyL6(surface target.Surface, p protocol.Probe, s *mcp.Session) Result
 // respondedBeyondHandshake reports whether the server emitted any response
 // other than the handshake's initialize reply (id=1). A parse error with a
 // null id, or an answer to the probe frame, both count.
+//
+// A _raw frame is a stdout line the client could not parse as a JSON object.
+// Counting it blindly masks a silent drop: a server that logs noise to stdout
+// while dropping a malformed frame would read as "responded" (bughunt-3 F001).
+// But a JSON-RPC BATCH response is a JSON array, which also lands as _raw
+// (it can't fit Frame's map shape) and IS a real response. So a _raw frame
+// counts only when it is itself valid JSON; non-JSON log noise does not.
 func respondedBeyondHandshake(s *mcp.Session) bool {
 	for _, r := range s.Responses {
 		if n, ok := r["id"].(float64); ok && n == 1 {
 			continue // the handshake initialize reply
 		}
-		return true
+		if raw, isRaw := r["_raw"].(string); isRaw {
+			if json.Valid([]byte(raw)) {
+				return true // a structured (e.g. batch-array) response
+			}
+			continue // non-JSON stdout noise is not a response
+		}
+		return true // a parsed JSON-RPC object that isn't the handshake reply
 	}
 	return false
 }

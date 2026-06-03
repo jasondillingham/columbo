@@ -3,10 +3,13 @@ package lanes
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jasondillingham/columbo/internal/findings"
@@ -228,20 +231,49 @@ func Tally(rs []Result) map[Verdict]int {
 	return m
 }
 
-// readSymbolValue extracts the double-quoted literal assigned to symbol in a
-// Go source file. Matches `Symbol = "x"`, `const Symbol = "x"`, and grouped
-// const blocks. Good enough for v0.2's version-constant sites.
+// readSymbolValue returns the string literal bound to symbol in a Go source
+// file. It parses the file with go/ast and reads the const/var declaration's
+// value, so a match inside a COMMENT or an unrelated string literal cannot
+// shadow the real declaration (bughunt-3 F002 — a regex first-match took the
+// commented value). Handles grouped const/var blocks; errors if symbol is
+// absent or not bound to a string literal.
 func readSymbolValue(path, symbol string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	re := regexp.MustCompile(`(?m)\b` + regexp.QuoteMeta(symbol) + `\s*=\s*"([^"]*)"`)
-	m := re.FindSubmatch(data)
-	if m == nil {
-		return "", fmt.Errorf("symbol %q not found (or not a string literal) in %s", symbol, path)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, data, 0)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", path, err)
 	}
-	return string(m[1]), nil
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || (gen.Tok != token.CONST && gen.Tok != token.VAR) {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range vs.Names {
+				if name.Name != symbol || i >= len(vs.Values) {
+					continue
+				}
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return "", fmt.Errorf("symbol %q in %s is not a string literal", symbol, path)
+				}
+				v, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					return "", fmt.Errorf("symbol %q in %s: %w", symbol, path, err)
+				}
+				return v, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("symbol %q not found (or not a string literal) in %s", symbol, path)
 }
 
 // runShell runs a command string via `sh -c` with cwd=dir. The command is

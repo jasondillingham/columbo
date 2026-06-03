@@ -56,6 +56,27 @@ var notAString = 42
 	}
 }
 
+// Regression for bughunt-3 F002: a comment mentioning the symbol before the
+// real declaration must not shadow it (the old regex took the first textual
+// match). The AST reader reads the declared value, ignoring comments.
+func TestReadSymbolValueIgnoresComment(t *testing.T) {
+	dir := t.TempDir()
+	src := "package p\n\n" +
+		"// historical note: Version = \"0.0.1\" in the old scheme\n" +
+		"const Version = \"1.2.3\"\n"
+	p := filepath.Join(dir, "v.go")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSymbolValue(p, "Version")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "1.2.3" {
+		t.Errorf("got %q, want %q (a comment must not shadow the const)", got, "1.2.3")
+	}
+}
+
 // The drift FINDING is the outcome the whole lane exists to produce, so it
 // gets an explicit assertion: a site whose source value does not match its
 // expected value must yield FINDING (not PASS, the dangerous false negative).
