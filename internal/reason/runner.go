@@ -43,7 +43,7 @@ func runReproducer(dir string, r Reproducer, timeout time.Duration) (out string,
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "test", "./"+filepath.ToSlash(r.PkgDir), "-run", r.Run, "-count=1")
+	cmd := exec.CommandContext(ctx, "go", "test", "-v", "./"+filepath.ToSlash(r.PkgDir), "-run", r.Run, "-count=1")
 	cmd.Dir = iso
 	b, runErr := cmd.CombinedOutput()
 	out = string(b)
@@ -51,8 +51,16 @@ func runReproducer(dir string, r Reproducer, timeout time.Duration) (out string,
 		// A hung reproducer is not a confirmation; report it, don't wedge.
 		return out + "\n[reproducer timed out]", false, nil
 	}
-	// exit 0 (runErr == nil) => the test passed => the bug is present.
-	return out, runErr == nil, nil
+	// A reproducer is "confirmed" only when a test actually RAN and PASSED.
+	// `go test` exits 0 even when `-run` matches nothing ("no tests to run"),
+	// when the only selected test is t.Skip()'d, or when it is build-tag
+	// excluded — so exit 0 alone is NOT evidence the bug assertion executed
+	// (bughunt-2 F001). With `-v`, a test that ran and passed emits a
+	// `--- PASS:` line; require both that line and a clean exit. A skipped test
+	// emits `--- SKIP:` (no PASS), a failing one makes runErr non-nil, and a
+	// no-match run emits neither — all correctly fall through to "not confirmed".
+	ran := strings.Contains(out, "--- PASS:")
+	return out, runErr == nil && ran, nil
 }
 
 // isolate produces a throwaway copy of the target for running a reproducer.

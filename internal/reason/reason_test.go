@@ -111,6 +111,30 @@ func TestReproduceConfirmsAndRefutes(t *testing.T) {
 	}
 }
 
+// Regression for bughunt-2 F001: a reproducer whose Run name matches NO test
+// (a typo, rename, or build-tag exclusion) must NOT be Confirmed. `go test`
+// exits 0 on a no-match run, so the firewall must require positive evidence a
+// test ran (a `--- PASS:` line), not merely a clean exit. The inner test would
+// FAIL if it were ever selected, proving no assertion executed.
+func TestReproduceRejectsHollowRun(t *testing.T) {
+	repo := tempBugRepo(t)
+	s := NewSession()
+	if _, err := s.Start(repo); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := s.Record(findings.Finding{Severity: findings.High, Title: "hollow"}, Reproducer{
+		PkgDir: "pkg", Run: "TestNameThatMatchesNothing",
+		File: "package pkg\nimport \"testing\"\nfunc TestActuallyFails(t *testing.T){ t.Fatal(\"never selected by -run\") }\n",
+	})
+	c, err := s.Reproduce(id)
+	if err != nil {
+		t.Fatalf("reproduce: %v\n%s", err, c.RunOutput)
+	}
+	if c.Status == Confirmed {
+		t.Errorf("a no-test-run reproducer must NOT be Confirmed (no assertion ran)\n%s", c.RunOutput)
+	}
+}
+
 // The caller is a model; out-of-order calls get clean errors, never panics.
 func TestOutOfOrderCalls(t *testing.T) {
 	s := NewSession()
