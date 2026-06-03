@@ -36,6 +36,30 @@ finalizes UNTRIAGED.
 
 Plan + open decisions: `docs/reason-lane-plan.md`. Slices 1 and 2 are done.
 
+### `/columbo` is wired and runnable (end of 2026-06-02 session)
+
+- `go install ./cmd/...` → `~/go/bin/columbo` and `~/go/bin/columbo-mcp`
+  (both `0.1.0-pre`).
+- `columbo-mcp` registered as a **user-scope MCP server** in `~/.claude.json`
+  (`claude mcp add columbo --scope user ~/go/bin/columbo-mcp`), alongside
+  `leonard`/`ollama`/etc. Smoke-tested: handshakes, exposes `reason_start /
+  reason_record / reason_reproduce / reason_finalize` (+ `audit_status /
+  audit_findings`).
+- The `/columbo` skill is installed globally (`~/.claude/skills/columbo/`).
+- MCP servers connect at session start, so `columbo` is NOT live in the
+  session that wired it — a NEW session is required for `/columbo` to work.
+
+### NEXT SESSION: self-audit columbo's own handlers
+
+Run a real `/columbo` round against this repo's `cmd/columbo-mcp` +
+`internal/` packages. Rationale: the `fix_shape` silent-drop bug (above) was
+in our own `reason_record` handler — schema-vs-struct drift is exactly our
+weak spot since we hand-roll the tool arg structs. Lead with that class:
+check every MCP tool handler's arg struct for snake_case fields missing a
+`json:` tag, then widen to the reason/findings/lanes logic. Land it as
+`audits/bughunt-2-*.md` (bughunt-1 already exists). Drive from the skill text;
+let execution confirm.
+
 ## Where it started
 
 Picked up from a session that scaffolded the repo from zero. History below.
