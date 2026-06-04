@@ -97,7 +97,21 @@ func classifyL6(surface target.Surface, p protocol.Probe, s *mcp.Session) Result
 		// error, OR a tool result with isError:true (the MCP SDK convention).
 		// Both are clean rejections. The actual violation is being ACCEPTED — a
 		// success result for something that should have been refused.
-		if code, isErr := errorCode(f); isErr {
+		if code, hasError, hasCode := errorCode(f); hasError {
+			if !hasCode {
+				// An error object with no numeric `code` is malformed, but it is
+				// NOT "code 0" — report it as its own defect, not the code:0 class.
+				return Result{probe, FINDING, "JSON-RPC error object is missing the required `code` field",
+					&findings.Finding{
+						Severity:   findings.Low,
+						Title:      fmt.Sprintf("JSON-RPC error missing required `code` field on %s", p.Label),
+						Observed:   "error object with no `code` field",
+						Expected:   "a JSON-RPC error carrying an integer `code` (JSON-RPC 2.0 §5.1)",
+						Reproducer: reproFrame(surface, p),
+						Class:      "jsonrpc-code-missing",
+						Locus:      p.Label,
+					}}
+			}
 			if code == 0 {
 				return Result{probe, FINDING, "JSON-RPC error code is 0 (spec reserves nonzero)",
 					&findings.Finding{
@@ -159,16 +173,20 @@ func respondedBeyondHandshake(s *mcp.Session) bool {
 	return false
 }
 
-// errorCode extracts a JSON-RPC error code from a response frame.
-func errorCode(f mcp.Frame) (int, bool) {
+// errorCode extracts a JSON-RPC error code from a response frame. hasError is
+// true when an `error` object is present; hasCode is true only when that object
+// carries a numeric `code`. The two are distinct: an error with NO `code` is a
+// different defect (JSON-RPC 2.0 §5.1 requires it) from an error with code:0,
+// and must not be reported as "code 0" (bughunt-3 F002).
+func errorCode(f mcp.Frame) (code int, hasError, hasCode bool) {
 	e, ok := f["error"].(map[string]any)
 	if !ok {
-		return 0, false
+		return 0, false, false
 	}
 	if c, ok := e["code"].(float64); ok {
-		return int(c), true
+		return int(c), true, true
 	}
-	return 0, true // has an error object but no numeric code
+	return 0, true, false // error object present but no numeric code
 }
 
 // resultIsError reports whether the frame is a tool result flagged isError:true

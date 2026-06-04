@@ -84,6 +84,25 @@ func TestClassifyL6NonzeroCode(t *testing.T) {
 		}
 	})
 
+	// Regression for bughunt-3 F002: an error object with NO `code` field is a
+	// distinct defect from code:0 and must not be mislabeled as the code-zero
+	// class.
+	t.Run("missing code is its own finding, not code:0", func(t *testing.T) {
+		s := &mcp.Session{Responses: []mcp.Frame{
+			{"id": float64(55), "error": map[string]any{"message": "no such method"}}, // no code
+		}}
+		r := classifyL6(surface, p, s)
+		if r.Verdict != FINDING || r.Finding == nil {
+			t.Fatalf("missing code must be a FINDING, got %s / %v", r.Verdict, r.Finding)
+		}
+		if r.Finding.Class == "jsonrpc-code-zero" {
+			t.Errorf("a code-absent error must not be reported as the code:0 class")
+		}
+		if r.Finding.Class != "jsonrpc-code-missing" {
+			t.Errorf("class = %q, want jsonrpc-code-missing", r.Finding.Class)
+		}
+	})
+
 	t.Run("nonzero code is a PASS", func(t *testing.T) {
 		s := &mcp.Session{Responses: []mcp.Frame{
 			{"id": float64(55), "error": map[string]any{"code": float64(-32601), "message": "method not found"}},
